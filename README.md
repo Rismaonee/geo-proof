@@ -21,3 +21,11 @@ Checkbox turns green = location captured and logged.
 ├─ index.html           # Frontend UI (fake captcha + geolocation sender)
 ├─ server.py            # Flask server (API + reverse geocoding + storage)
 └─ last_location.json   # Latest saved location info (auto-written)
+
+how to run : 
+
+1. run server.py
+2. run ngrok config add-authtoken "your config from ngrok website"
+3. run "ngrok http 5000" in terminal / cmd
+4. your ngrok public link ready (you can add url shortner to make it more legit :p) 
+
